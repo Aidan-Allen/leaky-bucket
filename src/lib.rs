@@ -533,6 +533,40 @@ impl LeakyBucket {
         self.acquire(1).await
     }
 
+    pub fn get_one(&self) -> Result<(), Error> {
+        let mut current = self.inner.tokens.load(Ordering::Acquire);
+        let mut new;
+
+        loop {
+            new = match current.checked_add(1) {
+                Some(new) => new,
+                None => {
+                    return Err(Error::TokenOverflow);
+                }
+            };
+
+            match self.inner.tokens.compare_exchange_weak(
+                current,
+                new,
+                Ordering::SeqCst,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(x) => {
+                    current = x;
+                }
+            }
+        }
+
+        // fast path, we successfully acquired the number of tokens needed to proceed.
+        if new < self.inner.max {
+            return Ok(());
+        }
+        else {
+            return Err(Error::TokenOverflow)
+        }
+    }
+
     /// Acquire the given `amount` of tokens.
     ///
     /// Note that you *are* allowed to acquire more tokens than the current
